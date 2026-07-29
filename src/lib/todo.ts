@@ -128,3 +128,39 @@ export function displaySort(tasks: Task[]): Task[] {
 export function isOverdue(task: Task): boolean {
 	return !task.complete && task.due !== null && task.due < todayStr();
 }
+
+/* --- Multi-line details within a single todo.txt line ---
+   Written as a visible " --- " separator (readable in any editor or
+   terminal, unlike sleek's invisible DLE control character). For
+   display we also split on sleek's DLE (\x10) and the bare "---" the
+   original DayTasks wrote, so existing files render correctly. */
+
+export const DETAIL_SEP = " --- ";
+const DETAIL_SPLIT = /\x10|\s*---\s*/;
+
+/** Split a task body into its display lines (always at least one). */
+export function bodyLines(body: string): string[] {
+	const parts = body
+		.split(DETAIL_SPLIT)
+		.map((s) => s.trim())
+		.filter((s) => s !== "");
+	return parts.length > 0 ? parts : [body];
+}
+
+/** Raw line -> text for the multi-line editor (separators become newlines). */
+export function rawToEditText(raw: string): string {
+	return raw
+		.split(DETAIL_SPLIT)
+		.map((s) => s.trim())
+		.filter((s) => s !== "")
+		.join("\n");
+}
+
+/** Editor text -> single todo.txt line (newlines become " --- "). */
+export function editTextToRaw(text: string): string {
+	return text
+		.split(/\r?\n/)
+		.map((s) => s.trim())
+		.filter((s) => s !== "")
+		.join(DETAIL_SEP);
+}

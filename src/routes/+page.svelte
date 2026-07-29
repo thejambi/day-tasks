@@ -13,6 +13,7 @@
 		archiveCompleted,
 		focusAdd,
 		focusFilter,
+		cancelEditing,
 		closeMenus,
 		bumpFont,
 		showEditContextMenu,
@@ -60,7 +61,7 @@
 		if (e.key === "Escape") {
 			if (app.modal) app.modal = null;
 			else if (app.openMenuShown || app.settingsMenuShown) closeMenus();
-			else if (app.editingLine !== null) app.editingLine = null;
+			else if (app.editingLine !== null) cancelEditing();
 			else if (document.activeElement === refsFilter()) {
 				if (app.filterText !== "") app.filterText = "";
 				else (document.activeElement as HTMLElement)?.blur();

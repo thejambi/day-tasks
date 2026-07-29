@@ -19,6 +19,8 @@ import {
 	buildComplete,
 	buildUncomplete,
 	buildSetPriority,
+	rawToEditText,
+	editTextToRaw,
 	type Task,
 } from "./todo";
 
@@ -43,7 +45,10 @@ export const app = $state({
 	projectFilter: null as string | null,
 	contextFilter: null as string | null,
 	selectedLine: null as number | null,
+	// The single add/edit bar: editingLine !== null means the bar holds
+	// an existing task; otherwise it adds new tasks.
 	editingLine: null as number | null,
+	barText: "",
 	openMenuShown: false,
 	settingsMenuShown: false,
 	modal: null as "shortcuts" | "about" | null,
@@ -55,7 +60,7 @@ let lastSavedText: string | null = null;
 
 export const refs = {
 	filterInput: null as HTMLInputElement | null,
-	addInput: null as HTMLInputElement | null,
+	addInput: null as HTMLTextAreaElement | null,
 };
 
 export function focusFilter(): void {
@@ -163,6 +168,35 @@ export async function deleteTask(line: number): Promise<void> {
 export async function editTask(line: number, newRaw: string): Promise<void> {
 	app.editingLine = null;
 	await saveLines(replaceLine(line, newRaw));
+}
+
+/** Load a task into the add/edit bar (editing happens in one place). */
+export function startEditing(task: Task): void {
+	app.editingLine = task.line;
+	app.barText = rawToEditText(task.raw);
+	refs.addInput?.focus();
+}
+
+export function cancelEditing(): void {
+	app.editingLine = null;
+	app.barText = "";
+}
+
+/** Submit the bar: saves the edited task, or adds a new one. */
+export async function submitBar(): Promise<void> {
+	const raw = editTextToRaw(app.barText);
+	if (raw === "") {
+		if (app.editingLine !== null) cancelEditing();
+		return;
+	}
+	if (app.editingLine !== null) {
+		const line = app.editingLine;
+		app.barText = "";
+		await editTask(line, raw);
+	} else {
+		app.barText = "";
+		await addTask(raw);
+	}
 }
 
 /** Move completed tasks to done.txt (appended), spec-style. */
@@ -273,7 +307,7 @@ export async function showTaskContextMenu(task: Task): Promise<void> {
 				text: task.complete ? "Mark Incomplete" : "Complete",
 				action: () => void toggleComplete(task.line),
 			},
-			{ id: "edit", text: "Edit", action: () => (app.editingLine = task.line) },
+			{ id: "edit", text: "Edit", action: () => startEditing(task) },
 			await PredefinedMenuItem.new({ item: "Separator" }),
 			prioItem("A"),
 			prioItem("B"),

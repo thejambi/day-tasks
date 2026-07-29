@@ -3,17 +3,15 @@
 		app,
 		refs,
 		isMac,
-		addTask,
 		toggleComplete,
-		editTask,
 		deleteTask,
 		setPriority,
+		startEditing,
+		cancelEditing,
+		submitBar,
 		showTaskContextMenu,
 	} from "$lib/app.svelte";
-	import { displaySort, isOverdue, type Task } from "$lib/todo";
-
-	let addText = $state("");
-	let editText = $state("");
+	import { displaySort, isOverdue, bodyLines, type Task } from "$lib/todo";
 
 	const visible = $derived.by(() => {
 		const q = app.filterText.trim().toLowerCase();
@@ -25,9 +23,11 @@
 		return displaySort(tasks);
 	});
 
+	const barRows = $derived(Math.min(6, Math.max(1, app.barText.split("\n").length)));
+
 	// Body tokens for styled rendering: +project, @context, key:value, text
-	function tokens(body: string): { kind: string; text: string }[] {
-		return body.split(/(\s+)/).map((part) => {
+	function tokens(line: string): { kind: string; text: string }[] {
+		return line.split(/(\s+)/).map((part) => {
 			if (/^\+\S+$/.test(part)) return { kind: "project", text: part };
 			if (/^@\S+$/.test(part)) return { kind: "context", text: part };
 			if (/^due:\d{4}-\d{2}-\d{2}$/.test(part)) return { kind: "due", text: part };
@@ -36,16 +36,14 @@
 		});
 	}
 
-	function startEdit(t: Task): void {
-		editText = t.raw;
-		app.editingLine = t.line;
-	}
-
-	function submitAdd(): void {
-		const text = addText.trim();
-		if (text === "") return;
-		addText = "";
-		void addTask(text);
+	function onBarKeydown(e: KeyboardEvent): void {
+		if (e.key === "Enter" && !e.shiftKey) {
+			e.preventDefault();
+			void submitBar();
+		} else if (e.key === "Escape" && app.editingLine !== null) {
+			e.stopPropagation();
+			cancelEditing();
+		}
 	}
 
 	function selectedTask(): Task | null {
@@ -55,7 +53,8 @@
 	function moveSelection(delta: number): void {
 		if (visible.length === 0) return;
 		const idx = visible.findIndex((t) => t.line === app.selectedLine);
-		const next = idx === -1 ? (delta > 0 ? 0 : visible.length - 1) : Math.min(visible.length - 1, Math.max(0, idx + delta));
+		const next =
+			idx === -1 ? (delta > 0 ? 0 : visible.length - 1) : Math.min(visible.length - 1, Math.max(0, idx + delta));
 		app.selectedLine = visible[next].line;
 		document.querySelector(`[data-line="${visible[next].line}"]`)?.scrollIntoView({ block: "nearest" });
 	}
@@ -104,7 +103,7 @@
 				const sel = selectedTask();
 				if (sel) {
 					e.preventDefault();
-					startEdit(sel);
+					startEditing(sel);
 				}
 				break;
 			}
@@ -120,110 +119,104 @@
 	}
 </script>
 
+{#snippet tokenLine(line: string, task: Task)}
+	{#each tokens(line) as tok, i (i)}
+		{#if tok.kind === "project"}<span
+				class="tok-project"
+				role="button"
+				tabindex="-1"
+				onclick={(e) => {
+					e.stopPropagation();
+					app.projectFilter = tok.text.slice(1);
+				}}
+				onkeydown={() => {}}>{tok.text}</span
+			>
+		{:else if tok.kind === "context"}<span
+				class="tok-context"
+				role="button"
+				tabindex="-1"
+				onclick={(e) => {
+					e.stopPropagation();
+					app.contextFilter = tok.text.slice(1);
+				}}
+				onkeydown={() => {}}>{tok.text}</span
+			>
+		{:else if tok.kind === "due"}<span class="tok-due" class:overdue={isOverdue(task)}>{tok.text}</span>
+		{:else if tok.kind === "meta"}<span class="tok-meta">{tok.text}</span>
+		{:else}{tok.text}{/if}
+	{/each}
+{/snippet}
+
 <svelte:window onkeydown={onListKeydown} />
 
 <div class="main" style="font-size: {app.settings.fontSize}px">
-	<div class="add-row">
-		<input
-			class="add-input"
-			placeholder="Add a task…  e.g. (A) Call Mom +family @phone due:2026-08-01"
+	<div class="add-row" class:editing={app.editingLine !== null}>
+		<textarea
+			class="bar-input"
+			rows={barRows}
+			placeholder={app.editingLine !== null
+				? "Editing task — Enter saves, Esc cancels, Shift+Enter adds a detail line"
+				: "Add a task…  e.g. (A) Call Mom +family @phone due:2026-08-01"}
 			bind:this={refs.addInput}
-			bind:value={addText}
-			onkeydown={(e) => {
-				if (e.key === "Enter") {
-					e.preventDefault();
-					submitAdd();
-				}
-			}}
-		/>
+			bind:value={app.barText}
+			onkeydown={onBarKeydown}
+		></textarea>
+		{#if app.editingLine !== null}
+			<button class="bar-cancel" title="Cancel editing (Esc)" onclick={cancelEditing}>✕</button>
+		{/if}
 	</div>
 	<div class="task-list">
 		{#each visible as t (t.line)}
-			{#if app.editingLine === t.line}
-				<div class="task-row editing">
-					<input
-						class="edit-input"
-						bind:value={editText}
-						onkeydown={(e) => {
-							if (e.key === "Enter") {
-								e.preventDefault();
-								void editTask(t.line, editText);
-							} else if (e.key === "Escape") {
-								e.stopPropagation();
-								app.editingLine = null;
-							}
-						}}
-						onblur={() => (app.editingLine = null)}
-						{@attach (el) => el.focus()}
-					/>
-				</div>
-			{:else}
-				<div
-					class="task-row"
-					class:selected={app.selectedLine === t.line}
-					class:done={t.complete}
-					role="button"
-					tabindex="-1"
-					data-line={t.line}
-					onclick={() => (app.selectedLine = t.line)}
-					ondblclick={() => startEdit(t)}
-					onkeydown={() => {}}
+			{@const lines = bodyLines(t.body)}
+			<div
+				class="task-row"
+				class:selected={app.selectedLine === t.line}
+				class:done={t.complete}
+				class:being-edited={app.editingLine === t.line}
+				role="button"
+				tabindex="-1"
+				data-line={t.line}
+				onclick={() => (app.selectedLine = t.line)}
+				ondblclick={() => startEditing(t)}
+				onkeydown={() => {}}
+			>
+				<input
+					class="check"
+					type="checkbox"
+					checked={t.complete}
+					onclick={(e) => {
+						e.stopPropagation();
+						void toggleComplete(t.line);
+					}}
+				/>
+				{#if t.priority}
+					<span class="pri pri-{t.priority <= 'C' ? t.priority : 'other'}">({t.priority})</span>
+				{/if}
+				<span class="body">
+					{@render tokenLine(lines[0], t)}
+					{#if lines.length > 1}
+						<span class="details">
+							{#each lines.slice(1) as line, i (i)}
+								<span class="detail-line">{@render tokenLine(line, t)}</span>
+							{/each}
+						</span>
+					{/if}
+				</span>
+				{#if t.creationDate && !t.complete}
+					<span class="date" title="Created {t.creationDate}">{t.creationDate}</span>
+				{:else if t.complete && t.completionDate}
+					<span class="date" title="Completed {t.completionDate}">✓ {t.completionDate}</span>
+				{/if}
+				<button
+					class="row-menu"
+					title="Task actions"
+					onclick={(e) => {
+						e.stopPropagation();
+						app.selectedLine = t.line;
+						void showTaskContextMenu(t);
+					}}>⋯</button
 				>
-					<input
-						class="check"
-						type="checkbox"
-						checked={t.complete}
-						onclick={(e) => {
-							e.stopPropagation();
-							void toggleComplete(t.line);
-						}}
-					/>
-					{#if t.priority}
-						<span class="pri pri-{t.priority <= 'C' ? t.priority : 'other'}">({t.priority})</span>
-					{/if}
-					<span class="body">
-						{#each tokens(t.body) as tok, i (i)}
-							{#if tok.kind === "project"}<span
-									class="tok-project"
-									role="button"
-									tabindex="-1"
-									onclick={(e) => {
-										e.stopPropagation();
-										app.projectFilter = tok.text.slice(1);
-									}}
-									onkeydown={() => {}}>{tok.text}</span
-								>
-							{:else if tok.kind === "context"}<span
-									class="tok-context"
-									role="button"
-									tabindex="-1"
-									onclick={(e) => {
-										e.stopPropagation();
-										app.contextFilter = tok.text.slice(1);
-									}}
-									onkeydown={() => {}}>{tok.text}</span
-								>
-							{:else if tok.kind === "due"}<span class="tok-due" class:overdue={isOverdue(t)}>{tok.text}</span>
-							{:else if tok.kind === "meta"}<span class="tok-meta">{tok.text}</span>
-							{:else}{tok.text}{/if}
-						{/each}
-					</span>
-					{#if t.creationDate && !t.complete}
-						<span class="date" title="Created {t.creationDate}">{t.creationDate}</span>
-					{:else if t.complete && t.completionDate}
-						<span class="date" title="Completed {t.completionDate}">✓ {t.completionDate}</span>
-					{/if}
-					<button
-						class="row-menu"
-						title="Task actions"
-						onclick={(e) => {
-							e.stopPropagation();
-							app.selectedLine = t.line;
-							void showTaskContextMenu(t);
-						}}>⋯</button
-					>
-				</div>
-			{/if}
+			</div>
 		{/each}
 		{#if app.todoDir && visible.length === 0}
 			<div class="empty-hint">
@@ -243,10 +236,13 @@
 		flex-direction: column;
 	}
 	.add-row {
+		display: flex;
+		align-items: flex-start;
+		gap: 6px;
 		padding: 10px 12px 6px;
 	}
-	.add-input {
-		width: 100%;
+	.bar-input {
+		flex: 1;
 		box-sizing: border-box;
 		font: inherit;
 		color: var(--fg);
@@ -255,9 +251,28 @@
 		border-radius: 8px;
 		padding: 8px 12px;
 		outline: none;
+		resize: none;
+		line-height: 1.45;
 	}
-	.add-input:focus {
+	.bar-input:focus {
 		border-color: var(--accent);
+	}
+	.add-row.editing .bar-input {
+		border-color: var(--accent);
+		background: var(--bg);
+	}
+	.bar-cancel {
+		font: inherit;
+		color: var(--fg-dim);
+		background: var(--bg-panel);
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		padding: 7px 11px;
+		cursor: pointer;
+	}
+	.bar-cancel:hover {
+		background: var(--hover);
+		color: var(--fg);
 	}
 	.task-list {
 		flex: 1;
@@ -278,6 +293,10 @@
 	}
 	.task-row.selected {
 		background: var(--sel);
+	}
+	.task-row.being-edited {
+		outline: 1px dashed var(--accent);
+		outline-offset: -1px;
 	}
 	.task-row.done {
 		opacity: 0.55;
@@ -314,6 +333,19 @@
 		flex: 1;
 		min-width: 0;
 		overflow-wrap: anywhere;
+	}
+	.details {
+		display: block;
+		margin-top: 2px;
+	}
+	.detail-line {
+		display: block;
+		font-size: 0.88em;
+		color: var(--fg-dim);
+		padding-left: 2px;
+		border-left: 2px solid var(--border);
+		margin: 2px 0 0 1px;
+		padding-left: 8px;
 	}
 	.tok-project {
 		color: var(--accent);
@@ -367,20 +399,6 @@
 	.row-menu:hover {
 		background: var(--hover);
 		color: var(--fg);
-	}
-	.editing {
-		padding: 3px 8px;
-	}
-	.edit-input {
-		width: 100%;
-		box-sizing: border-box;
-		font: inherit;
-		color: var(--fg);
-		background: var(--bg);
-		border: 1px solid var(--accent);
-		border-radius: 7px;
-		padding: 5px 8px;
-		outline: none;
 	}
 	.empty-hint {
 		color: var(--fg-dim);
